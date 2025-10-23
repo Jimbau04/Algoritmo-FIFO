@@ -1,69 +1,86 @@
-package cliente.Interfaz; // Asegúrate de que el paquete sea correcto
+package cliente.Interfaz;
+
+import cliente.ClienteFIFO;
+import util.Constantes;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
+import java.util.Map;
 
 public class ClienteGUI extends JFrame {
 
     private JTable tablaProcesos;
     private DefaultTableModel modeloProcesos;
-    private JButton btnConnect, btnDisconnect, btnAddProcess, btnKillProcess;
+    private JButton btnConnect, btnDisconnect, btnAddProcess, btnKillProcess, btnRefresh;
     private JLabel statusLabel;
 
+    // ⭐ NUEVO: Cliente XML-RPC
+    private ClienteFIFO clienteRPC;
+    private String clienteId;
+
+    // ⭐ NUEVO: Hilo para actualización automática
+    private Timer timerActualizacion;
+
     public ClienteGUI() {
-        setTitle("Cliente Planificador");
-        setSize(900, 600);
+        // Generar ID único para este cliente
+        clienteId = "Cliente-" + System.currentTimeMillis();
+
+        // Crear el cliente RPC (aún no conectado)
+        clienteRPC = new ClienteFIFO(Constantes.SERVIDOR_URL, clienteId);
+
+        setTitle("Cliente Planificador - " + clienteId);
+        setSize(1000, 600);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLayout(new BorderLayout(5, 5));
 
-        // Añadir un borde vacío para que no esté pegado a los bordes
         ((JPanel)getContentPane()).setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 
-        // 1. Panel Superior (Conexión)
+        // Paneles
         add(crearPanelConexion(), BorderLayout.NORTH);
-
-        // 2. Panel Central (Tabla de Procesos)
         add(crearPanelTabla(), BorderLayout.CENTER);
-
-        // 3. Panel Inferior (Acciones y Estado)
         add(crearPanelAcciones(), BorderLayout.SOUTH);
 
         setLocationRelativeTo(null);
-
-        // Añadir los listeners a los botones
         agregarListeners();
     }
 
     /**
-     * Crea el panel superior con los botones de Conectar/Desconectar
+     * Panel de conexión
      */
     private JPanel crearPanelConexion() {
         JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT));
         panel.setBorder(BorderFactory.createTitledBorder("Conexión con el Servidor"));
 
+        // Mostrar URL del servidor
+        JLabel lblServidor = new JLabel("Servidor: " + Constantes.SERVIDOR_URL);
+        lblServidor.setFont(new Font("Arial", Font.PLAIN, 12));
+
         btnConnect = new JButton("Conectar");
         btnDisconnect = new JButton("Desconectar");
-        btnDisconnect.setEnabled(false); // Empieza desconectado
+        btnDisconnect.setEnabled(false);
 
+        panel.add(lblServidor);
+        panel.add(Box.createHorizontalStrut(20));
         panel.add(btnConnect);
         panel.add(btnDisconnect);
+
         return panel;
     }
 
     /**
-     * Crea el panel central con la tabla dinámica de procesos
+     * Panel con la tabla de procesos
      */
     private JScrollPane crearPanelTabla() {
         String[] columnas = {
-                "ID Proceso", "Estado", "T. Ejecución (C)",
-                "T. Espera", "T. Finalización", "T. Penalización"
+                "ID Proceso", "Estado", "T. CPU (t)",
+                "T. Espera (E)", "T. Finalización (F)", "Penalización (P)"
         };
 
         modeloProcesos = new DefaultTableModel(columnas, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
-                return false; // Hace que la tabla no sea editable
+                return false;
             }
         };
 
@@ -77,33 +94,41 @@ public class ClienteGUI extends JFrame {
     }
 
     /**
-     * Crea el panel inferior con botones de acción y la barra de estado
+     * Panel de acciones
      */
     private JPanel crearPanelAcciones() {
-        // Panel contenedor principal
         JPanel panel = new JPanel(new BorderLayout());
 
-        // Sub-panel para los botones de Agregar/Eliminar
+        // Sub-panel para botones
         JPanel panelBotones = new JPanel(new FlowLayout(FlowLayout.CENTER));
         panelBotones.setBorder(BorderFactory.createTitledBorder("Acciones de Proceso"));
 
         btnAddProcess = new JButton("Agregar Nuevo Proceso");
         btnKillProcess = new JButton("Eliminar Proceso Seleccionado");
+        btnRefresh = new JButton("Actualizar Estado");
+
+        // Inicialmente deshabilitados
+        btnAddProcess.setEnabled(false);
+        btnKillProcess.setEnabled(false);
+        btnRefresh.setEnabled(false);
 
         panelBotones.add(btnAddProcess);
         panelBotones.add(btnKillProcess);
+        panelBotones.add(btnRefresh);
 
         panel.add(panelBotones, BorderLayout.NORTH);
 
-        // Sub-panel para la barra de estado (lo que pediste como "tabla")
+        // Barra de estado
         statusLabel = new JLabel("Estado: Desconectado", SwingConstants.LEFT);
         statusLabel.setFont(new Font("Arial", Font.BOLD, 12));
         statusLabel.setBorder(BorderFactory.createEtchedBorder());
-        statusLabel.setOpaque(true); // Necesario para que el fondo se vea
-
-        // Estado inicial (Rojo)
+        statusLabel.setOpaque(true);
         statusLabel.setBackground(Color.decode("#E74C3C"));
         statusLabel.setForeground(Color.WHITE);
+        statusLabel.setBorder(BorderFactory.createCompoundBorder(
+                statusLabel.getBorder(),
+                BorderFactory.createEmptyBorder(5, 10, 5, 10)
+        ));
 
         panel.add(statusLabel, BorderLayout.SOUTH);
 
@@ -111,205 +136,345 @@ public class ClienteGUI extends JFrame {
     }
 
     /**
-     * Centraliza todos los ActionListeners
+     * Agregar listeners a los botones
      */
     private void agregarListeners() {
 
-        // --- Listener de Conexión ---
-        btnConnect.addActionListener(e -> {
-            // --- AQUÍ VA TU LÓGICA DE RED PARA CONECTAR ---
-            // Ejemplo: if (miClienteRMI.conectar()) {
-            System.out.println("Intentando conectar...");
-            // Si tiene éxito:
-            actualizarEstadoConexion("Conectado", Color.decode("#2ECC71"));
-            btnConnect.setEnabled(false);
-            btnDisconnect.setEnabled(true);
-            // } else {
-            //   actualizarEstadoConexion("Error de Conexión", Color.ORANGE);
-            // }
-        });
+        // ============ CONECTAR ============
+        btnConnect.addActionListener(e -> conectarAlServidor());
 
-        // --- Listener de Desconexión ---
-        btnDisconnect.addActionListener(e -> {
-            // --- AQUÍ VA TU LÓGICA DE RED PARA DESCONECTAR ---
-            System.out.println("Desconectando...");
-            actualizarEstadoConexion("Desconectado", Color.decode("#E74C3C"));
-            btnConnect.setEnabled(true);
-            btnDisconnect.setEnabled(false);
-        });
+        // ============ DESCONECTAR ============
+        btnDisconnect.addActionListener(e -> desconectarDelServidor());
 
-        // --- Listener para Agregar Proceso ---
-        btnAddProcess.addActionListener(e -> {
-            mostrarDialogoNuevoProceso();
-        });
+        // ============ AGREGAR PROCESO ============
+        btnAddProcess.addActionListener(e -> mostrarDialogoNuevoProceso());
 
-        // --- Listener para Eliminar Proceso ---
-        btnKillProcess.addActionListener(e -> {
-            int filaSeleccionada = tablaProcesos.getSelectedRow();
+        // ============ ELIMINAR PROCESO ============
+        btnKillProcess.addActionListener(e -> eliminarProcesoSeleccionado());
 
-            if (filaSeleccionada == -1) {
-                JOptionPane.showMessageDialog(this,
-                        "Por favor, selecciona un proceso de la tabla para eliminar.",
-                        "Error", JOptionPane.ERROR_MESSAGE);
-                return;
-            }
+        // ============ ACTUALIZAR (REFRESH) ============
+        btnRefresh.addActionListener(e -> actualizarTablaProcesos());
+    }
 
-            String idProceso = (String) modeloProcesos.getValueAt(filaSeleccionada, 0);
+    // ═══════════════════════════════════════════════════════════
+    // MÉTODOS DE CONEXIÓN
+    // ═══════════════════════════════════════════════════════════
 
-            // Confirmación
-            int confirm = JOptionPane.showConfirmDialog(this,
-                    "¿Estás seguro de que quieres eliminar el proceso '" + idProceso + "'?",
-                    "Confirmar Eliminación", JOptionPane.YES_NO_OPTION);
+    /**
+     * Conectar al servidor
+     */
+    private void conectarAlServidor() {
+        btnConnect.setEnabled(false);
+        actualizarEstadoConexion("Conectando...", Color.ORANGE);
 
-            if (confirm == JOptionPane.YES_OPTION) {
-                // --- AQUÍ VA TU LÓGICA DE RED PARA ENVIAR "ELIMINAR(idProceso)" AL SERVIDOR ---
-                System.out.println("Enviando solicitud para eliminar: " + idProceso);
-                // El servidor debería responder con el nuevo estado "Eliminado"
-                // y tu hilo de red llamaría a:
-                agregarOActualizarProceso(idProceso, "Eliminado", "0", "0", "N/A", "N/A");
-            }
-        });
+        // Ejecutar la conexión en un hilo separado para no bloquear la GUI
+        new Thread(() -> {
+            boolean conectado = clienteRPC.conectar();
+
+            SwingUtilities.invokeLater(() -> {
+                if (conectado) {
+                    actualizarEstadoConexion("Conectado", Color.decode("#2ECC71"));
+                    btnConnect.setEnabled(false);
+                    btnDisconnect.setEnabled(true);
+                    btnAddProcess.setEnabled(true);
+                    btnKillProcess.setEnabled(true);
+                    btnRefresh.setEnabled(true);
+
+                    // Iniciar actualización automática cada segundo
+                    iniciarActualizacionAutomatica();
+
+                    JOptionPane.showMessageDialog(this,
+                            "Conectado exitosamente al servidor",
+                            "Conexión Exitosa",
+                            JOptionPane.INFORMATION_MESSAGE);
+                } else {
+                    actualizarEstadoConexion("Error de Conexión", Color.decode("#E74C3C"));
+                    btnConnect.setEnabled(true);
+
+                    JOptionPane.showMessageDialog(this,
+                            "No se pudo conectar al servidor.\n" +
+                                    "Verifica que el servidor esté ejecutándose en:\n" +
+                                    Constantes.SERVIDOR_URL,
+                            "Error de Conexión",
+                            JOptionPane.ERROR_MESSAGE);
+                }
+            });
+        }).start();
     }
 
     /**
-     * Muestra un diálogo para que el usuario ingrese los datos del nuevo proceso.
+     * Desconectar del servidor
+     */
+    private void desconectarDelServidor() {
+        int confirm = JOptionPane.showConfirmDialog(this,
+                "¿Estás seguro de que quieres desconectar?\n" +
+                        "Todos los procesos en cola serán eliminados.",
+                "Confirmar Desconexión",
+                JOptionPane.YES_NO_OPTION);
+
+        if (confirm == JOptionPane.YES_OPTION) {
+            // Detener la actualización automática
+            detenerActualizacionAutomatica();
+
+            new Thread(() -> {
+                boolean desconectado = clienteRPC.desconectar();
+
+                SwingUtilities.invokeLater(() -> {
+                    actualizarEstadoConexion("Desconectado", Color.decode("#E74C3C"));
+                    btnConnect.setEnabled(true);
+                    btnDisconnect.setEnabled(false);
+                    btnAddProcess.setEnabled(false);
+                    btnKillProcess.setEnabled(false);
+                    btnRefresh.setEnabled(false);
+
+                    // Limpiar la tabla
+                    modeloProcesos.setRowCount(0);
+
+                    if (desconectado) {
+                        JOptionPane.showMessageDialog(this,
+                                "Desconectado exitosamente",
+                                "Desconexión",
+                                JOptionPane.INFORMATION_MESSAGE);
+                    }
+                });
+            }).start();
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // MÉTODOS DE PROCESOS
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Mostrar diálogo para agregar nuevo proceso
      */
     private void mostrarDialogoNuevoProceso() {
-        // Campos de texto para el diálogo
-        JTextField txtId = new JTextField(10);
-        JTextField txtTiempoEjecucion = new JTextField(5);
+        JTextField txtNombre = new JTextField(15);
+        JTextField txtTiempoCPU = new JTextField(5);
 
-        // Panel contenedor del diálogo
         JPanel panelDialog = new JPanel(new GridLayout(0, 2, 5, 5));
-        panelDialog.add(new JLabel("ID del Proceso:"));
-        panelDialog.add(txtId);
-        panelDialog.add(new JLabel("Tiempo de Ejecución (C):"));
-        panelDialog.add(txtTiempoEjecucion);
+        panelDialog.add(new JLabel("Nombre del Proceso:"));
+        panelDialog.add(txtNombre);
+        panelDialog.add(new JLabel("Tiempo de CPU (t):"));
+        panelDialog.add(txtTiempoCPU);
 
         int result = JOptionPane.showConfirmDialog(this, panelDialog,
                 "Agregar Nuevo Proceso", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
 
         if (result == JOptionPane.OK_OPTION) {
-            String id = txtId.getText().trim();
-            String tEjec = txtTiempoEjecucion.getText().trim();
+            String nombre = txtNombre.getText().trim();
+            String tiempoCPUStr = txtTiempoCPU.getText().trim();
 
-            if (id.isEmpty() || tEjec.isEmpty()) {
-                JOptionPane.showMessageDialog(this, "Ambos campos son obligatorios.", "Error", JOptionPane.ERROR_MESSAGE);
+            // Validaciones
+            if (nombre.isEmpty() || tiempoCPUStr.isEmpty()) {
+                JOptionPane.showMessageDialog(this,
+                        "Ambos campos son obligatorios.",
+                        "Error", JOptionPane.ERROR_MESSAGE);
                 return;
             }
 
             try {
-                // Validar que el tiempo sea un número
-                Integer.parseInt(tEjec);
+                int tiempoCPU = Integer.parseInt(tiempoCPUStr);
+
+                if (tiempoCPU <= 0) {
+                    JOptionPane.showMessageDialog(this,
+                            "El tiempo de CPU debe ser mayor a 0.",
+                            "Error", JOptionPane.ERROR_MESSAGE);
+                    return;
+                }
+
+                // Agregar el proceso en un hilo separado
+                agregarProcesoAlServidor(nombre, tiempoCPU);
+
             } catch (NumberFormatException e) {
-                JOptionPane.showMessageDialog(this, "El tiempo de ejecución debe ser un número.", "Error", JOptionPane.ERROR_MESSAGE);
-                return;
+                JOptionPane.showMessageDialog(this,
+                        "El tiempo de CPU debe ser un número válido.",
+                        "Error", JOptionPane.ERROR_MESSAGE);
             }
-
-            // --- AQUÍ VA TU LÓGICA DE RED PARA ENVIAR EL NUEVO PROCESO AL SERVIDOR ---
-            System.out.println("Enviando nuevo proceso al servidor: ID=" + id + ", C=" + tEjec);
-
-            // Como feedback inmediato, lo agregamos localmente como "Creado"
-            // El servidor luego confirmará la "Llegada al Servidor"
-            agregarOActualizarProceso(id, "Creado", tEjec, "0", "N/A", "N/A");
         }
     }
 
-    // --- MÉTODOS PÚBLICOS PARA CONTROLAR LA GUI DESDE EL EXTERIOR (ej. Hilos de Red) ---
-    // ¡Estos son los métodos más importantes para tu lógica de red!
+    /**
+     * Agregar proceso al servidor
+     */
+    private void agregarProcesoAlServidor(String nombre, int tiempoCPU) {
+        new Thread(() -> {
+            boolean agregado = clienteRPC.agregarProceso(nombre, tiempoCPU);
+
+            SwingUtilities.invokeLater(() -> {
+                if (agregado) {
+                    JOptionPane.showMessageDialog(this,
+                            "Proceso '" + nombre + "' agregado exitosamente",
+                            "Éxito",
+                            JOptionPane.INFORMATION_MESSAGE);
+
+                    // Actualizar inmediatamente la tabla
+                    actualizarTablaProcesos();
+                } else {
+                    JOptionPane.showMessageDialog(this,
+                            "Error al agregar el proceso.\n" +
+                                    "Puede que ya exista un proceso con ese nombre.",
+                            "Error",
+                            JOptionPane.ERROR_MESSAGE);
+                }
+            });
+        }).start();
+    }
 
     /**
-     * Actualiza la barra de estado. Es Thread-Safe.
+     * Eliminar proceso seleccionado
+     */
+    private void eliminarProcesoSeleccionado() {
+        int filaSeleccionada = tablaProcesos.getSelectedRow();
+
+        if (filaSeleccionada == -1) {
+            JOptionPane.showMessageDialog(this,
+                    "Por favor, selecciona un proceso de la tabla para eliminar.",
+                    "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        String nombreProceso = (String) modeloProcesos.getValueAt(filaSeleccionada, 0);
+        String estado = (String) modeloProcesos.getValueAt(filaSeleccionada, 1);
+
+        // Advertencia si está en ejecución
+        if (estado.equals("EJECUTANDO")) {
+            JOptionPane.showMessageDialog(this,
+                    "No se puede eliminar un proceso en ejecución.",
+                    "Error", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        int confirm = JOptionPane.showConfirmDialog(this,
+                "¿Estás seguro de que quieres eliminar el proceso '" + nombreProceso + "'?",
+                "Confirmar Eliminación", JOptionPane.YES_NO_OPTION);
+
+        if (confirm == JOptionPane.YES_OPTION) {
+            new Thread(() -> {
+                boolean eliminado = clienteRPC.eliminarProceso(nombreProceso);
+
+                SwingUtilities.invokeLater(() -> {
+                    if (eliminado) {
+                        JOptionPane.showMessageDialog(this,
+                                "Proceso eliminado exitosamente",
+                                "Éxito",
+                                JOptionPane.INFORMATION_MESSAGE);
+
+                        // Actualizar la tabla
+                        actualizarTablaProcesos();
+                    } else {
+                        JOptionPane.showMessageDialog(this,
+                                "No se pudo eliminar el proceso.\n" +
+                                        "Puede estar en ejecución o ya completado.",
+                                "Error",
+                                JOptionPane.ERROR_MESSAGE);
+                    }
+                });
+            }).start();
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // MÉTODOS DE ACTUALIZACIÓN
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Actualizar la tabla con los procesos del servidor
+     */
+    private void actualizarTablaProcesos() {
+        if (!clienteRPC.isConectado()) {
+            return;
+        }
+
+        new Thread(() -> {
+            try {
+                Object[] procesos = clienteRPC.obtenerTodosLosProcesos();
+
+                SwingUtilities.invokeLater(() -> {
+                    // Limpiar la tabla
+                    modeloProcesos.setRowCount(0);
+
+                    // Agregar cada proceso
+                    for (Object obj : procesos) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> proceso = (Map<String, Object>) obj;
+
+                        String nombre = (String) proceso.get(Constantes.KEY_NOMBRE);
+                        String estado = (String) proceso.get(Constantes.KEY_ESTADO);
+                        int tiempoCPU = (Integer) proceso.get(Constantes.KEY_TIEMPO_CPU);
+                        int tiempoEspera = (Integer) proceso.get(Constantes.KEY_TIEMPO_ESPERA);
+                        int tiempoFin = (Integer) proceso.get(Constantes.KEY_TIEMPO_FINALIZACION);
+                        double penalizacion = (Double) proceso.get(Constantes.KEY_PENALIZACION);
+
+                        // Formatear los valores para mostrar
+                        String tiempoFinStr = (tiempoFin >= 0) ? String.valueOf(tiempoFin) : "N/A";
+                        String penalizacionStr = (penalizacion > 0) ? String.format("%.2f", penalizacion) : "N/A";
+
+                        Object[] fila = {
+                                nombre,
+                                estado,
+                                tiempoCPU,
+                                tiempoEspera,
+                                tiempoFinStr,
+                                penalizacionStr
+                        };
+
+                        modeloProcesos.addRow(fila);
+                    }
+                });
+
+            } catch (Exception e) {
+                System.err.println("Error al actualizar tabla: " + e.getMessage());
+            }
+        }).start();
+    }
+
+    /**
+     * Iniciar actualización automática cada segundo
+     */
+    private void iniciarActualizacionAutomatica() {
+        timerActualizacion = new Timer(Constantes.INTERVALO_ACTUALIZACION, e -> {
+            actualizarTablaProcesos();
+        });
+        timerActualizacion.start();
+        System.out.println("✓ Actualización automática iniciada");
+    }
+
+    /**
+     * Detener actualización automática
+     */
+    private void detenerActualizacionAutomatica() {
+        if (timerActualizacion != null && timerActualizacion.isRunning()) {
+            timerActualizacion.stop();
+            System.out.println("✓ Actualización automática detenida");
+        }
+    }
+
+    /**
+     * Actualizar la barra de estado (Thread-Safe)
      */
     public void actualizarEstadoConexion(String texto, Color colorFondo) {
-        // Asegura que la actualización de la GUI se haga en el hilo de Swing
         SwingUtilities.invokeLater(() -> {
             statusLabel.setText("Estado: " + texto);
             statusLabel.setBackground(colorFondo);
         });
     }
 
-    /**
-     * Añade una nueva fila o actualiza una existente. Es Thread-Safe.
-     * Esta es la función clave que tu hilo de red debe llamar.
-     *
-     * @param id El ID único del proceso
-     * @param estado (Creado, Llegada al Servidor, En Ejecución, Finalizado, Eliminado)
-     * @param tEjec Tiempo de Ejecución (C)
-     * @param tEspera Tiempo de Espera
-     * @param tFin Tiempo de Finalización
-     * @param tPenal Tiempo de Penalización
-     */
-    public void agregarOActualizarProceso(String id, String estado, String tEjec, String tEspera, String tFin, String tPenal) {
-        SwingUtilities.invokeLater(() -> {
-            // 1. Buscar si el proceso ya existe en la tabla
-            int fila = buscarFilaPorID(id);
+    // ═══════════════════════════════════════════════════════════
+    // MAIN - PUNTO DE ENTRADA
+    // ═══════════════════════════════════════════════════════════
 
-            if (fila == -1) {
-                // 2. Si no existe, añadirlo como nueva fila
-                Object[] nuevaFila = {id, estado, tEjec, tEspera, tFin, tPenal};
-                modeloProcesos.addRow(nuevaFila);
-            } else {
-                // 3. Si existe, actualizar los datos de esa fila
-                modeloProcesos.setValueAt(estado, fila, 1);
-                modeloProcesos.setValueAt(tEjec, fila, 2);
-                modeloProcesos.setValueAt(tEspera, fila, 3);
-                modeloProcesos.setValueAt(tFin, fila, 4);
-                modeloProcesos.setValueAt(tPenal, fila, 5);
-            }
-        });
-    }
-
-    /**
-     * Elimina un proceso de la tabla. Es Thread-Safe.
-     * (Opcional, puedes simplemente cambiar el estado a "Eliminado")
-     */
-    public void eliminarProcesoDeTabla(String id) {
-        SwingUtilities.invokeLater(() -> {
-            int fila = buscarFilaPorID(id);
-            if (fila != -1) {
-                modeloProcesos.removeRow(fila);
-            }
-        });
-    }
-
-    /**
-     * Método de ayuda para encontrar una fila basado en el ID de la columna 0.
-     * @return El índice de la fila, o -1 si no se encuentra.
-     */
-    private int buscarFilaPorID(String id) {
-        for (int i = 0; i < modeloProcesos.getRowCount(); i++) {
-            if (id.equals(modeloProcesos.getValueAt(i, 0))) {
-                return i;
-            }
-        }
-        return -1; // No se encontró
-    }
-
-    // --- Main para probar la GUI ---
     public static void main(String[] args) {
+        // Configurar Look and Feel del sistema
+        try {
+            UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
         SwingUtilities.invokeLater(() -> {
             ClienteGUI cliente = new ClienteGUI();
             cliente.setVisible(true);
-
-            // --- Prueba de actualización dinámica ---
-            // (Simula lo que haría tu hilo de red)
-            new Thread(() -> {
-                try {
-                    Thread.sleep(3000);
-                    cliente.agregarOActualizarProceso("P1", "Creado", "10", "0", "N/A", "N/A");
-                    Thread.sleep(1000);
-                    cliente.agregarOActualizarProceso("P2", "Creado", "5", "0", "N/A", "N/A");
-                    Thread.sleep(2000);
-                    cliente.agregarOActualizarProceso("P1", "Llegada al Servidor", "10", "0", "N/A", "N/A");
-                    Thread.sleep(2000);
-                    cliente.agregarOActualizarProceso("P2", "Llegada al Servidor", "5", "0", "N/A", "N/A");
-                    Thread.sleep(1000);
-                    cliente.agregarOActualizarProceso("P1", "En Ejecución", "10", "2", "N/A", "N/A");
-                    Thread.sleep(3000);
-                    cliente.agregarOActualizarProceso("P1", "Finalizado", "10", "2", "15", "1.3");
-                } catch (InterruptedException e) {}
-            }).start();
         });
     }
 }
