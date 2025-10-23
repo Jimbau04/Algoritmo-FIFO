@@ -4,9 +4,9 @@ import javax.swing.SwingUtilities;
 
 public class InterfazServidor {
 
-    procesos v1;
-    tirmpos vTiempos;
-    ColaVentana vColas;
+    public procesos v1;
+    public tirmpos vTiempos;
+    public ColaVentana vColas;
 
     public InterfazServidor() {
         // El constructor ahora crea las 3 ventanas
