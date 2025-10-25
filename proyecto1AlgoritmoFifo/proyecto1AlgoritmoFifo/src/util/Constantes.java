@@ -3,7 +3,9 @@ package util;
 public class Constantes {
     public static final int PUERTO_SERVIDOR = 8080;
     public static final int RANGO_PLANIFICADOR = 40; // Capacidad del planificador (40 ticks)
-    public static final int SIMULACION_TICK_MS = 5000; // 1 tick de CPU = 5 segundos reales
+
+    // Configuración de simulación
+    public static final int SIMULACION_TICK_MS = 5000; // 1 tick = 5 segundo (cambiar a 5000 para producción)
     public static final int TIMEOUT_INACTIVIDAD_CLIENTE_S = 30; // 30 segundos
 
     // Namespace del Servidor

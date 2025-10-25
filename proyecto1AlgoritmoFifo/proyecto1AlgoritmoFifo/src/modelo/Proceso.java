@@ -18,7 +18,7 @@ public class Proceso implements Serializable {
         this.nombre = nombre;
         this.tiempoCPU = tiempoCPU;
         this.tiempoPeticion = tiempoPeticion;
-        this.estado = EstadoProceso.LISTO;
+        this.estado = EstadoProceso.EN_COLA;
         this.tiempoLlegada = tiempoLlegada; // Este es el tiempo *planificado*
         this.tiempoInicio = -1;
         this.tiempoFin = -1;

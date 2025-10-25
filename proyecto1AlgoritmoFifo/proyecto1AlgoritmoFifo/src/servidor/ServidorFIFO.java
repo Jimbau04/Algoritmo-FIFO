@@ -18,20 +18,17 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class ServidorFIFO {
 
-    // --- Atributos de Red y Lógica ---
     private WebServer webServer;
     private int puerto;
     private final int rangoPlanificador;
     private boolean ejecutando;
     private Thread hiloEjecucion;
-    private int tiempoSimulacionGlobal = 1; // El reloj empieza en el tick 1
+    private int tiempoSimulacionGlobal = 0;
 
-    // --- Gestión de Estado ---
     private ColaProceso colaProceso;
     private Map<String, List<String>> clientesProcesos;
     private Map<String, Timer> timersInactividad;
 
-    // --- Referencias a las GUIs del Servidor ---
     private procesos guiProcesos;
     private tirmpos guiTiempos;
     private ColaVentana guiColas;
@@ -52,8 +49,6 @@ public class ServidorFIFO {
         this.guiColas = guiColas;
         System.out.println("✓ GUIs del servidor conectadas.");
     }
-
-    // ============ MÉTODOS DE INICIO/PARADA ============
 
     public void iniciar() throws Exception {
         webServer = new WebServer(puerto);
@@ -89,45 +84,78 @@ public class ServidorFIFO {
         System.out.println("✓ Servidor detenido");
     }
 
-    // ============ HILO DE EJECUCIÓN (PLANIFICADOR) ============
-
     private void iniciarHiloEjecucion() {
         ejecutando = true;
         hiloEjecucion = new Thread(() -> {
             System.out.println("✓ Hilo de ejecución (Planificador) iniciado.");
             while (ejecutando) {
                 try {
+                    System.out.println("\n═══════════════════════════════════════");
+                    System.out.println("  TICK: " + tiempoSimulacionGlobal);
+                    System.out.println("═══════════════════════════════════════");
+
+                    // 1. PROCESAR PROCESOS PENDIENTES (por tiempo de petición)
+                    List<Proceso> procesosIntentados = colaProceso.procesarPendientes(
+                            tiempoSimulacionGlobal, rangoPlanificador);
+
+                    for (Proceso p : procesosIntentados) {
+                        if (p.getEstado() == EstadoProceso.EN_COLA) {
+                            notificarGUIs_Nuevo(p);
+                        } else if (p.getEstado() == EstadoProceso.EN_FILA_ESPERA) {
+                            notificarGUIs_NuevoEnEspera(p);
+                        }
+                    }
+
+                    // 2. INCREMENTAR TICKS EN ESPERA
+                    colaProceso.incrementarTicksEspera();
 
                     Proceso pEnEjecucion = colaProceso.getProcesoEnEjecucion();
 
                     if (pEnEjecucion != null) {
-                        // 1. EJECUTAR UN TICK
+                        // 3. EJECUTAR UN TICK
                         pEnEjecucion.incrementarTiempoEjecutado();
                         notificarGUIs_TickEjecucion(pEnEjecucion, tiempoSimulacionGlobal);
 
-                        // 2. COMPPROBAR SI TERMINÓ
+                        System.out.println("  Ejecutando: " + pEnEjecucion.getNombre() +
+                                " (" + pEnEjecucion.getTiempoEjecutado() +
+                                "/" + pEnEjecucion.getTiempoCPU() + ")");
+
+                        // 4. COMPROBAR SI TERMINÓ
                         if (pEnEjecucion.getTiempoEjecutado() >= pEnEjecucion.getTiempoCPU()) {
+                            System.out.println("  ✓ Proceso terminado: " + pEnEjecucion.getNombre());
                             colaProceso.marcarProcesoTerminado(tiempoSimulacionGlobal);
                             notificarGUIs_Terminado(pEnEjecucion);
                         }
                     }
                     else if (!colaProceso.estaVacia()) {
-                        // 3. INICIAR NUEVO PROCESO
+                        // 5. INICIAR NUEVO PROCESO
                         Proceso pNuevo = colaProceso.obtenerSiguienteProceso();
-                        if (pNuevo == null) continue;
+                        if (pNuevo != null) {
+                            pNuevo.setTiempoInicio(tiempoSimulacionGlobal);
+                            pNuevo.incrementarTiempoEjecutado();
 
-                        pNuevo.setTiempoInicio(tiempoSimulacionGlobal);
-                        pNuevo.incrementarTiempoEjecutado();
+                            System.out.println("  Iniciando: " + pNuevo.getNombre() +
+                                    " (Espera: " + pNuevo.getTiempoEspera() + ")");
 
-                        notificarGUIs_Ejecucion(pNuevo);
-                        notificarGUIs_TickEjecucion(pNuevo, tiempoSimulacionGlobal); // Ejecutar primer tick
+                            notificarGUIs_Ejecucion(pNuevo);
+                            notificarGUIs_TickEjecucion(pNuevo, tiempoSimulacionGlobal);
+                        }
+                    } else {
+                        System.out.println("  CPU libre (sin procesos)");
                     }
-                    else if (colaProceso.hayProcesosEnEspera()) {
-                        // 4. CHEQUEAR COLA DE ESPERA (solo si CPU está libre y cola de listos vacía)
-                        chequearColaEspera();
+
+                    // 6. CHEQUEAR REINTENTOS DE PROCESOS EN ESPERA
+                    chequearProcesosEnEspera();
+
+                    // Mostrar estado de las colas
+                    if (colaProceso.hayProcesosPendientes()) {
+                        System.out.println("  Pendientes: " + colaProceso.getProcesosPendientes().size());
+                    }
+                    if (colaProceso.hayProcesosEnEspera()) {
+                        System.out.println("  En Espera: " + colaProceso.getProcesosEnEspera().size());
                     }
 
-                    // 5. AVANZAR EL RELOJ
+                    // 7. AVANZAR EL RELOJ
                     Thread.sleep(Constantes.SIMULACION_TICK_MS);
                     tiempoSimulacionGlobal++;
 
@@ -144,39 +172,54 @@ public class ServidorFIFO {
         hiloEjecucion.start();
     }
 
-    private synchronized void chequearColaEspera() {
-        Proceso p = colaProceso.obtenerSiguienteDe_Espera();
-        if (p == null) return;
+    private synchronized void chequearProcesosEnEspera() {
+        List<Proceso> procesosListos = colaProceso.getProcesosListosParaReintento();
 
-        System.out.println("  Reintentando proceso en espera: " + p.getNombre());
+        for (Proceso p : procesosListos) {
+            int espacioUsado = colaProceso.calcularEspacioUsado(tiempoSimulacionGlobal);
+            int espacioDisponible = rangoPlanificador - espacioUsado;
 
-        int finPlanActual = colaProceso.getTiempoFinPlanificado();
-        int tiempoLlegada = Math.max(1, finPlanActual + 1); // Su nueva llegada planificada
-        int tiempoFinEstimado = tiempoLlegada + p.getTiempoCPU() - 1;
+            System.out.println("  Reintentando: " + p.getNombre() +
+                    " (Ticks espera: " + colaProceso.getTicksEnEspera(p.getNombre()) +
+                    ", Intento: " + (colaProceso.getIntentos(p.getNombre()) + 1) + ")");
+            System.out.println("    Espacio usado: " + espacioUsado + "/" + rangoPlanificador +
+                    ", Disponible: " + espacioDisponible + ", Necesita: " + p.getTiempoCPU());
 
-        // Actualizar el proceso con sus nuevos tiempos planificados
-        p.setTiempoLlegada(tiempoLlegada);
-        p.setTiempoFin(tiempoFinEstimado);
+            if (espacioDisponible >= p.getTiempoCPU()) {
+                // CABE - Mover a cola de listos
+                colaProceso.removerDeEspera(p);
 
-        if (tiempoFinEstimado <= this.rangoPlanificador) {
-            System.out.println("  ✓ Proceso " + p.getNombre() + " aceptado en reintento.");
-            colaProceso.agregarProceso(p); // Mover a cola de Listos
-            notificarGUIs_MovidoA_Listo(p);
-        } else {
-            colaProceso.incrementarIntentos(p.getNombre());
+                int finPlanActual = colaProceso.getTiempoFinPlanificado();
+                int tiempoLlegada = Math.max(tiempoSimulacionGlobal, finPlanActual + 1);
+                int tiempoFinEstimado = tiempoLlegada + p.getTiempoCPU() - 1;
 
-            if (colaProceso.getIntentos(p.getNombre()) >= 2) {
-                System.out.println("  ✗ Proceso " + p.getNombre() + " falló reintento. MATANDO.");
-                colaProceso.matarProceso(p, EstadoProceso.RECHAZADO);
-                notificarGUIs_Eliminado(p, EstadoProceso.RECHAZADO);
+                p.setTiempoLlegada(tiempoLlegada);
+                p.setTiempoFin(tiempoFinEstimado);
+
+                colaProceso.agregarProceso(p);
+                System.out.println("    ✓ ACEPTADO en reintento (Plan: " + tiempoLlegada +
+                        " a " + tiempoFinEstimado + ")");
+                notificarGUIs_MovidoA_Listo(p);
+
             } else {
-                System.out.println("  ! Proceso " + p.getNombre() + " sigue sin caber. Re-encolando.");
-                colaProceso.agregarA_EsperaCapacidad(p); // Ponerlo al final
+                // NO CABE
+                colaProceso.incrementarIntentos(p.getNombre());
+                int intentos = colaProceso.getIntentos(p.getNombre());
+
+                if (intentos >= 2) {
+                    // MATAR después del segundo intento fallido
+                    colaProceso.removerDeEspera(p);
+                    colaProceso.matarProceso(p, EstadoProceso.RECHAZADO);
+                    System.out.println("    ✗ RECHAZADO definitivamente (2 intentos fallidos)");
+                    notificarGUIs_Rechazado(p);
+                } else {
+                    // Resetear ticks para esperar otros 5
+                    System.out.println("    ! Sigue sin caber, esperará otros 5 ticks");
+                    notificarGUIs_ActualizarEspera(p);
+                }
             }
         }
     }
-
-    // ============ MÉTODOS REMOTOS (LLAMADOS POR EL CLIENTE) ============
 
     public boolean conectarCliente(String clienteId) {
         if (clienteId == null || clienteId.trim().isEmpty()) return false;
@@ -196,9 +239,11 @@ public class ServidorFIFO {
         if (procesosCliente != null) {
             for (String nombreProceso : new ArrayList<>(procesosCliente)) {
                 Proceso p = colaProceso.getProceso(nombreProceso);
-                if (p != null && (p.getEstado() == EstadoProceso.LISTO || p.getEstado() == EstadoProceso.RECHAZADO)) {
+                if (p != null && (p.getEstado() == EstadoProceso.NUEVO ||
+                        p.getEstado() == EstadoProceso.EN_COLA ||
+                        p.getEstado() == EstadoProceso.EN_FILA_ESPERA)) {
                     colaProceso.eliminarProceso(nombreProceso);
-                    notificarGUIs_Eliminado(p, EstadoProceso.ELIMINADO);
+                    notificarGUIs_Eliminado(p);
                 }
             }
         }
@@ -208,29 +253,24 @@ public class ServidorFIFO {
         return true;
     }
 
-    public synchronized boolean agregarProceso(String clienteId, String nombreProceso, int tiempoCPU, int tiempoPeticion) {
+    public synchronized boolean agregarProceso(String clienteId, String nombreProceso,
+                                               int tiempoCPU, int tiempoPeticion) {
         if (!clientesProcesos.containsKey(clienteId)) return false;
         if (colaProceso.getProceso(nombreProceso) != null) return false;
 
         resetTimerInactividad(clienteId);
 
-        int finPlanActual = colaProceso.getTiempoFinPlanificado();
-        int tiempoLlegada = Math.max(1, finPlanActual + 1);
-        int tiempoFinEstimado = tiempoLlegada + tiempoCPU - 1;
+        System.out.println("\n[AGREGAR] " + nombreProceso + " - CPU: " + tiempoCPU +
+                ", Petición (t): " + tiempoPeticion);
 
+        // Crear el proceso con su tiempo de petición
+        Proceso p = new Proceso(clienteId, nombreProceso, tiempoCPU, tiempoPeticion, tiempoPeticion);
 
-        Proceso p = new Proceso(clienteId, nombreProceso, tiempoCPU, tiempoLlegada, tiempoPeticion);
-        p.setTiempoFin(tiempoFinEstimado);
+        // Agregarlo a la cola de PENDIENTES (se procesará cuando llegue su tick)
+        colaProceso.agregarProcesoPendiente(p);
 
-        if (tiempoFinEstimado > this.rangoPlanificador) {
-            System.out.println("✗ Proceso " + nombreProceso + " no cabe (Plan Lleno: " + tiempoFinEstimado + " > " + this.rangoPlanificador + "). Puesto en cola de espera.");
-            colaProceso.agregarA_EsperaCapacidad(p);
-            notificarGUIs_NuevoEnEspera(p);
-        } else {
-            colaProceso.agregarProceso(p);
-            System.out.println("✓ Proceso encolado (Listo): " + nombreProceso + " (Plan: " + tiempoLlegada + " a " + tiempoFinEstimado + ")");
-            notificarGUIs_Nuevo(p);
-        }
+        // Notificar a la GUI que el proceso está pendiente
+        notificarGUIs_Pendiente(p);
 
         clientesProcesos.get(clienteId).add(nombreProceso);
         return true;
@@ -246,7 +286,7 @@ public class ServidorFIFO {
 
         if (colaProceso.eliminarProceso(nombreProceso)) {
             System.out.println("✓ Cliente eliminó proceso: " + nombreProceso);
-            notificarGUIs_Eliminado(p, EstadoProceso.ELIMINADO);
+            notificarGUIs_Eliminado(p);
             return true;
         } else {
             System.out.println("✗ Cliente intentó eliminar proceso en ejecución: " + nombreProceso);
@@ -271,18 +311,15 @@ public class ServidorFIFO {
         return listaMapas.toArray();
     }
 
-    // ============ LÓGICA DE TIMEOUT DE INACTIVIDAD ============
-
     private void iniciarTimerInactividad(String clienteId) {
         Timer timer = new Timer(true);
         TimerTask task = new TimerTask() {
             @Override
             public void run() {
                 if (colaProceso.getProcesosActivosCliente(clienteId).isEmpty()) {
-                    System.out.println("! Timeout de 15s para cliente: " + clienteId + ". Desconectando.");
+                    System.out.println("! Timeout de inactividad para: " + clienteId);
                     desconectarCliente(clienteId);
                 } else {
-                    System.out.println("  Timer de inactividad para " + clienteId + " chequeado, pero sigue con procesos activos. Reiniciando timer.");
                     resetTimerInactividad(clienteId);
                 }
             }
@@ -299,15 +336,29 @@ public class ServidorFIFO {
         iniciarTimerInactividad(clienteId);
     }
 
-    // ============ MÉTODOS DE NOTIFICACIÓN A GUIs ============
+    // ============ NOTIFICACIONES A GUIs ============
+
+    private void notificarGUIs_Pendiente(Proceso p) {
+        if (guiColas != null) {
+            guiColas.agregarNuevo(p.getNombre() + " (t=" + p.getTiempoPeticion() + ")");
+        }
+        if (guiProcesos != null) {
+            // Solo registrar el tick de petición (P)
+            guiProcesos.registrarTareaCompleta(p.getNombre(), -1, -1, -1, p.getTiempoPeticion());
+        }
+        if (guiTiempos != null) {
+            guiTiempos.agregarProceso(p.getNombre());
+            guiTiempos.actualizarTiempoEspera(p.getNombre(), "PEND(" + p.getTiempoPeticion() + ")");
+        }
+    }
 
     private void notificarGUIs_Nuevo(Proceso p) {
         if (guiColas != null) {
-            guiColas.agregarNuevo(p.getNombre());
             guiColas.moverA_Listo(p.getNombre());
         }
         if (guiProcesos != null) {
-            guiProcesos.registrarTareaCompleta(p.getNombre(), p.getTiempoLlegada(), -1, p.getTiempoFin());
+            guiProcesos.registrarTareaCompleta(p.getNombre(), p.getTiempoLlegada(),
+                    -1, p.getTiempoFin(), p.getTiempoPeticion());
         }
         if (guiTiempos != null) {
             guiTiempos.agregarProceso(p.getNombre());
@@ -316,10 +367,10 @@ public class ServidorFIFO {
 
     private void notificarGUIs_NuevoEnEspera(Proceso p) {
         if (guiColas != null) {
-            guiColas.agregarNuevo(p.getNombre() + " (En Espera)");
+            guiColas.moverA_Bloqueado(p.getNombre() + " (Espera)");
         }
         if (guiProcesos != null) {
-            guiProcesos.registrarTareaCompleta(p.getNombre(), p.getTiempoLlegada(), -1, p.getTiempoFin());
+            guiProcesos.registrarTareaCompleta(p.getNombre(), -1, -1, -1, p.getTiempoPeticion());
         }
         if (guiTiempos != null) {
             guiTiempos.agregarProceso(p.getNombre());
@@ -329,18 +380,30 @@ public class ServidorFIFO {
 
     private void notificarGUIs_MovidoA_Listo(Proceso p) {
         if (guiColas != null) {
-            guiColas.moverA_Listo(p.getNombre() + " (En Espera)");
+            guiColas.moverA_Listo(p.getNombre());
+        }
+        if (guiProcesos != null) {
+            guiProcesos.registrarTareaCompleta(p.getNombre(), p.getTiempoLlegada(),
+                    -1, p.getTiempoFin(), p.getTiempoPeticion());
         }
         if (guiTiempos != null) {
             guiTiempos.actualizarTiempoEspera(p.getNombre(), 0);
         }
     }
 
+    private void notificarGUIs_ActualizarEspera(Proceso p) {
+        if (guiTiempos != null) {
+            int ticks = colaProceso.getTicksEnEspera(p.getNombre());
+            guiTiempos.actualizarTiempoEspera(p.getNombre(),
+                    "ESPERA(" + ticks + "/5)");
+        }
+    }
+
     private void notificarGUIs_Ejecucion(Proceso p) {
         if (guiColas != null) guiColas.moverA_Ejecucion(p.getNombre());
         if (guiProcesos != null) {
-            guiProcesos.registrarTareaCompleta(
-                    p.getNombre(), p.getTiempoLlegada(), p.getTiempoInicio(), p.getTiempoFin());
+            guiProcesos.registrarTareaCompleta(p.getNombre(), p.getTiempoLlegada(),
+                    p.getTiempoInicio(), p.getTiempoFin(), p.getTiempoPeticion());
         }
         if (guiTiempos != null) {
             guiTiempos.actualizarTiempoEspera(p.getNombre(), p.getTiempoEspera());
@@ -357,19 +420,35 @@ public class ServidorFIFO {
     private void notificarGUIs_Terminado(Proceso p) {
         if (guiColas != null) guiColas.moverA_Terminado(p.getNombre());
         if (guiTiempos != null) {
-            guiTiempos.actualizarTiempoFinalizacion(p.getNombre(), p.getTiempoFinalizacion());
-            guiTiempos.actualizarPenalizacion(p.getNombre(), String.format("%.2f", p.getPenalizacion()));
+            guiTiempos.actualizarTiempoFinalizacion(p.getNombre(),
+                    p.getTiempoFinalizacion());
+            guiTiempos.actualizarPenalizacion(p.getNombre(),
+                    String.format("%.2f", p.getPenalizacion()));
             guiTiempos.calcularYActualizarMedias();
         }
     }
 
-    private void notificarGUIs_Eliminado(Proceso p, EstadoProceso estado) {
+    private void notificarGUIs_Rechazado(Proceso p) {
         if (guiColas != null) {
-            guiColas.moverA_Terminado(p.getNombre() + " (" + estado.name() + ")");
+            guiColas.moverA_Terminado(p.getNombre() + " (RECHAZADO)");
         }
         if (guiTiempos != null) {
             guiTiempos.eliminarProceso(p.getNombre());
             guiTiempos.calcularYActualizarMedias();
         }
+    }
+
+    private void notificarGUIs_Eliminado(Proceso p) {
+        if (guiColas != null) {
+            guiColas.moverA_Terminado(p.getNombre() + " (ELIMINADO)");
+        }
+        if (guiTiempos != null) {
+            guiTiempos.eliminarProceso(p.getNombre());
+            guiTiempos.calcularYActualizarMedias();
+        }
+    }
+
+    public int getTiempoSimulacionGlobal() {
+        return tiempoSimulacionGlobal;
     }
 }
