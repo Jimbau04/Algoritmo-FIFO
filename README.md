@@ -1,1 +1,1 @@
-# Algoritmo-FIFO
+# ProyectoDistribuida
